@@ -13,6 +13,35 @@ from sklearn.model_selection import train_test_split
 
 np.random.seed(32)
 
+# ─────────────────────────────────────────────────────────────────────────────
+# SEARCH SPACE
+# ─────────────────────────────────────────────────────────────────────────────
+SEARCH_SPACE = {
+    "batch_size": (16, 256),     # integer range
+    "learning_rate": (1e-4, 1e-2),  # log-uniform range (min, max)
+    "dropout_rate": (0.1, 0.5)   # uniform range (min, max)
+}
+
+# skopt space (bruges til BO)
+space = [
+    Integer(SEARCH_SPACE["batch_size"][0], SEARCH_SPACE["batch_size"][1], name="batch_size"),
+    Real(SEARCH_SPACE["learning_rate"][0], SEARCH_SPACE["learning_rate"][1], prior="log-uniform", name="learning_rate"),
+    Real(SEARCH_SPACE["dropout_rate"][0], SEARCH_SPACE["dropout_rate"][1], name="dropout_rate"),
+]
+
+# Random sampler (bruges til Random Search + til BO seed)
+def sample_random_params(rng: np.random.Generator, n: int):
+    bs_low, bs_high = SEARCH_SPACE["batch_size"]
+    lr_low, lr_high = SEARCH_SPACE["learning_rate"]
+    dr_low, dr_high = SEARCH_SPACE["dropout_rate"]
+
+    batch_sizes = rng.integers(bs_low, bs_high + 1, size=n)  # +1 fordi integers high er exclusive
+    learning_rates = 10 ** rng.uniform(np.log10(lr_low), np.log10(lr_high), size=n)  # log-uniform
+    dropout_rates = rng.uniform(dr_low, dr_high, size=n)
+
+    return batch_sizes, learning_rates, dropout_rates
+
+
 # ── 1. Load & preprocess MNIST ───────────────────────────────────────────────
 (train_X, train_y), (test_X, test_y) = mnist.load_data()
 
@@ -31,8 +60,8 @@ train_y_cat = to_categorical(train_y, 10)
 test_y_cat  = to_categorical(test_y,  10)
 
 # Use only a subset of original dataset for better speed during tuning
-N_TRAIN = 10_000 # The subset the model will be trained and tuned on
-N_TEST  = 2_000 # The subset the model will be evaluated on (final evaluation)
+N_TRAIN = 10_000  # subset for training+tuning
+N_TEST  = 2_000   # subset for final test evaluation
 X_tr, y_tr = train_X[:N_TRAIN], train_y_cat[:N_TRAIN]
 X_te, y_te = test_X[:N_TEST],   test_y_cat[:N_TEST]
 
@@ -79,7 +108,7 @@ def build_and_evaluate(batch_size: int, learning_rate: float, dropout_rate: floa
         X_train, y_train,
         batch_size=int(batch_size),
         epochs=epochs,
-        validation_data=(X_val, y_val),   # ✅ fixed validation set
+        validation_data=(X_val, y_val),
         callbacks=[early_stop],
         verbose=0
     )
@@ -112,9 +141,7 @@ print("\n── Random Search (optimiserer VALIDATION accuracy) ─────�
 N_ITER = 20
 rng = np.random.default_rng(32)
 
-random_batch_sizes = rng.integers(16, 257, size=N_ITER)
-random_learning_rates = 10 ** rng.uniform(-4, -2, size=N_ITER)   # mere stabilt end (-4, 2)
-random_dropout_rates = rng.uniform(0.1, 0.5, size=N_ITER)
+random_batch_sizes, random_learning_rates, random_dropout_rates = sample_random_params(rng, N_ITER)
 
 current_best_val = 0.0
 best_random_params = None
@@ -144,12 +171,6 @@ for i in range(N_ITER):
 # ── 4. Bayesian Optimisation with skopt ──────────────────────────────────────
 print("\n── Bayesian Optimisation (optimiserer VALIDATION accuracy) ────────────")
 
-space = [
-    Integer(16, 256, name='batch_size'),
-    Real(1e-4, 1e-2, prior='log-uniform', name='learning_rate'),
-    Real(0.1, 0.5, name='dropout_rate')
-]
-
 bo_iter = [1]
 
 def objective_function(x):
@@ -166,14 +187,14 @@ def objective_function(x):
 
 np.int = int  # numpy deprecation workaround required by skopt
 
-# ✅ Seed BO korrekt: 1 observation (x0/y0) + (N_ITER-1) nye calls = N_ITER total
+# ✅ Seed BO korrekt med første random punkt (alle 3 parametre)
 x0 = [[int(random_batch_sizes[0]), float(random_learning_rates[0]), float(random_dropout_rates[0])]]
 y0 = [-build_and_evaluate(*x0[0])]
 
 opt = gp_minimize(
     objective_function,
     space,
-    n_calls=N_ITER - 1,     # ✅ vigtig: ellers får du 21 punkter
+    n_calls=N_ITER - 1,     # 1 seed + (N_ITER-1) = N_ITER total
     x0=x0,
     y0=y0,
     acq_func="EI",
@@ -203,12 +224,11 @@ print(f"  Bayesian Opt TEST acc : {bo_test_acc:.4f}")
 
 # ── 6. Plot 1: Random Search vs Bayesian Optimisation (VAL curves) ───────────
 y_bo = np.maximum.accumulate(-opt.func_vals).ravel()
-
-xs = np.arange(1, N_ITER + 1)  # nu passer det, fordi y_bo også har N_ITER punkter
+xs = np.arange(1, N_ITER + 1)
 
 plt.figure(figsize=(8, 5))
 plt.plot(xs, max_val_per_iter_random, 'o-', color='red',  label='Random Search (best val)')
-plt.plot(xs, y_bo,                   'o-', color='blue', label='Bayesian Optimisation (best val)')
+plt.plot(xs, y_bo,                    'o-', color='blue', label='Bayesian Optimisation (best val)')
 plt.xlabel('Iterations')
 plt.ylabel('Best Validation Accuracy')
 plt.title('Random Search vs Bayesian Optimisation (tuning on validation)')
@@ -220,11 +240,13 @@ plt.show()
 print("Plot saved to bo_vs_random.png")
 
 
-
-
 # ── 7. Plot 2: GP Surrogate + Acquisition Function (kun batch dimension) ─────
+# NB: Denne plot giver kun mening hvis man “holder de andre parametre faste”.
+# Her viser vi stadig kun batch-dimensionen, som du gjorde før.
 gp_model  = opt.models[-1]
-grid      = np.arange(16, 256).reshape(-1, 1)
+
+bs_low, bs_high = SEARCH_SPACE["batch_size"]
+grid      = np.arange(bs_low, bs_high + 1).reshape(-1, 1)
 grid_norm = np.array([opt.space[0][1].transform(x) for x in grid.ravel()]).reshape(-1, 1)
 
 ye, ye_std = gp_model.predict(X=grid_norm, return_std=True)
