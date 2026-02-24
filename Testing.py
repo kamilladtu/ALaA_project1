@@ -18,8 +18,8 @@ np.random.seed(32)
 # ─────────────────────────────────────────────────────────────────────────────
 SEARCH_SPACE = {
     "batch_size": (16, 256),     # integer range
-    "learning_rate": (1e-4, 1e-2),  # log-uniform range (min, max)
-    "dropout_rate": (0.1, 0.5)   # uniform range (min, max)
+    "learning_rate": (1e-4, 100),  # log-uniform range (min, max)
+    "dropout_rate": (0.01, 0.5)   # uniform range (min, max)
 }
 
 # skopt space (bruges til BO)
