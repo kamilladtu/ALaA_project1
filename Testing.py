@@ -1,6 +1,5 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import skopt
 from skopt import gp_minimize
 from keras.datasets import mnist
 from keras.models import Sequential
@@ -10,8 +9,10 @@ from keras.callbacks import EarlyStopping
 from keras.optimizers import Adam
 from skopt.space import Integer, Real
 from sklearn.model_selection import train_test_split
+import tensorflow as tf
 
 np.random.seed(32)
+tf.random.set_seed(32)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SEARCH SPACE (ONE PLACE)
@@ -19,7 +20,7 @@ np.random.seed(32)
 SEARCH_SPACE = {
     "batch_size":   (8, 512),        # integer range
     "learning_rate": (1e-6, 1e-1),    # log-uniform range (min, max)  
-    "dropout_rate": (0.0, 0.8),      # uniform range (min, max)
+    "dropout_rate": (0.0, 0.5),      # uniform range (min, max)
     "num_filters":  (8, 256),         # integer range for filters
 }
 
@@ -41,7 +42,7 @@ def sample_random_params(rng: np.random.Generator, n: int):
     batch_sizes = rng.integers(bs_low, bs_high + 1, size=n)
     learning_rates = 10 ** rng.uniform(np.log10(lr_low), np.log10(lr_high), size=n)  # log-uniform
     dropout_rates = rng.uniform(dr_low, dr_high, size=n)
-    num_filters = rng.integers(nf_low, nf_high + 1, size=n)  # ✅ NY
+    num_filters = rng.integers(nf_low, nf_high + 1, size=n)  
 
     return batch_sizes, learning_rates, dropout_rates, num_filters
 
@@ -83,7 +84,7 @@ print("X_test: ", X_te.shape,    "y_test: ", y_te.shape)
 def build_model(learning_rate: float, dropout_rate: float, num_filters: int) -> Sequential:
     model = Sequential([
         Input(shape=(28, 28, 1)),
-        Conv2D(int(num_filters), (3, 3), activation='relu'),   # ✅ bruger num_filters
+        Conv2D(int(num_filters), (3, 3), activation='relu'), 
         MaxPooling2D((2, 2)),
         Flatten(),
         Dense(128, activation='relu'),
