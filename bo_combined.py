@@ -1,3 +1,5 @@
+# This script is written with the help of AI. Obviously.
+
 import os
 import numpy as np
 import matplotlib.pyplot as plt
